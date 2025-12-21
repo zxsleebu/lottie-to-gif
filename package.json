@@ -1,0 +1,16 @@
+{
+  "name": "lottie-to-gif",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.86",
+    "gifenc": "^1.0.3",
+    "lottie-web": "^5.13.0"
+  }
+}
