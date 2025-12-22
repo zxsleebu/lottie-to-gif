@@ -43,11 +43,13 @@ export const lottieToGif = async (
     const ctx = canvas.getContext("2d");
 
     const animation = lottie.loadAnimation({
+        //@ts-expect-error types
         renderer: "canvas",
         loop: false,
         autoplay: false,
         animationData: jsonData,
         rendererSettings: {
+            //@ts-expect-error types
             context: ctx as any,
             clearCanvas: true,
             preserveAspectRatio: "xMidYMid meet",
@@ -68,7 +70,7 @@ export const lottieToGif = async (
         // We assume the background should be transparent.
         // We clean up "dirty" semi-transparent pixels that cause black flickering.
         for (let j = 0; j < data.length; j += 4) {
-            const alpha = data[j + 3];
+            const alpha = data[j + 3] ?? 0;
 
             if (alpha < alphaThreshold) {
                 // Force absolute transparency
@@ -88,8 +90,8 @@ export const lottieToGif = async (
 
         // 2. Find Transparent Index
         let transparentIndex = -1;
-        for (let p = 0; p < palette.length; p++) {
-            if (palette[p][3] === 0) {
+        for (let p = 0; p < palette?.length; p++) {
+            if (palette?.[p]?.[3] === 0) {
                 transparentIndex = p;
                 break;
             }
