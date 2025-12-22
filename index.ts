@@ -21,7 +21,6 @@ const lottie = require("lottie-web/build/player/lottie.js") as LottiePlayer;
 
 export const lottieToGif = async (
     jsonData: any,
-    outputPath: string,
     width?: number,
     height?: number
 ) => {
