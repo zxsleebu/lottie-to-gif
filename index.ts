@@ -28,7 +28,7 @@ export const lottieToGif = async (
         frameRate?: number;
         alphaThreshold?: number;
     }
-) => {
+): Promise<Uint8Array> => {
     // --- Config ---
     const w = options?.w || (jsonData.w as number);
     const h = options?.h || (jsonData.h as number);
@@ -60,57 +60,71 @@ export const lottieToGif = async (
     const totalFrames = animation.totalFrames;
     const delay = 1000 / frameRate;
 
-    for (let i = 0; i < totalFrames; i++) {
-        animation.goToAndStop(i, true);
+    // Pre-allocate reusable buffer for pixel data to avoid per-frame allocations
+    const pixelCount = w * h * 4;
+    const reusableData = new Uint8ClampedArray(pixelCount);
 
-        const frameData = ctx.getImageData(0, 0, w, h);
-        const data = frameData.data;
+    try {
+        for (let i = 0; i < totalFrames; i++) {
+            animation.goToAndStop(i, true);
 
-        // --- THE FIX ---
-        // We assume the background should be transparent.
-        // We clean up "dirty" semi-transparent pixels that cause black flickering.
-        for (let j = 0; j < data.length; j += 4) {
-            const alpha = data[j + 3] ?? 0;
+            const frameData = ctx.getImageData(0, 0, w, h);
+            const data = frameData.data;
 
-            if (alpha < alphaThreshold) {
-                // Force absolute transparency
-                data[j + 3] = 0;
-                // Clear color data to avoid "ghost" colors
-                data[j] = 0;
-                data[j + 1] = 0;
-                data[j + 2] = 0;
-            } else {
-                // Force full opacity
-                data[j + 3] = 255;
+            // Copy to reusable buffer and process in-place
+            reusableData.set(data);
+
+            // --- THE FIX ---
+            // We assume the background should be transparent.
+            // We clean up "dirty" semi-transparent pixels that cause black flickering.
+            for (let j = 0; j < pixelCount; j += 4) {
+                const alpha = reusableData[j + 3] ?? 0;
+
+                if (alpha < alphaThreshold) {
+                    // Force absolute transparency and clear color data
+                    reusableData[j] = 0;
+                    reusableData[j + 1] = 0;
+                    reusableData[j + 2] = 0;
+                    reusableData[j + 3] = 0;
+                } else {
+                    // Force full opacity
+                    reusableData[j + 3] = 255;
+                }
             }
+
+            // 1. Quantize (RGBA)
+            const palette = quantize(reusableData, 256, { format: "rgba4444" });
+
+            // 2. Find Transparent Index
+            let transparentIndex = -1;
+            const paletteLen = palette?.length ?? 0;
+            for (let p = 0; p < paletteLen; p++) {
+                if (palette[p]?.[3] === 0) {
+                    transparentIndex = p;
+                    break;
+                }
+            }
+
+            // 3. Apply Palette
+            const index = applyPalette(reusableData, palette, { format: "rgba4444" });
+
+            // 4. Write Frame
+            encoder.writeFrame(index, w, h, {
+                palette,
+                delay,
+                transparent: transparentIndex !== -1,
+                transparentIndex,
+                dispose: 2, // Restore to background (Prevents trails)
+            });
         }
 
-        // 1. Quantize (RGBA)
-        const palette = quantize(data, 256, { format: "rgba4444" });
-
-        // 2. Find Transparent Index
-        let transparentIndex = -1;
-        for (let p = 0; p < palette?.length; p++) {
-            if (palette?.[p]?.[3] === 0) {
-                transparentIndex = p;
-                break;
-            }
-        }
-
-        // 3. Apply Palette
-        const index = applyPalette(data, palette, { format: "rgba4444" });
-
-        // 4. Write Frame
-        encoder.writeFrame(index, w, h, {
-            palette,
-            delay,
-            transparent: transparentIndex !== -1,
-            transparentIndex: transparentIndex,
-            dispose: 2, // Restore to background (Prevents trails)
-        });
+        encoder.finish();
+        return encoder.bytes();
+    } finally {
+        // CRITICAL: Destroy animation to free lottie-web resources
+        animation.destroy();
+        
+        // Clear canvas context to release GPU/memory resources
+        ctx.clearRect(0, 0, w, h);
     }
-
-    encoder.finish();
-
-    return encoder.bytes();
 };
