@@ -1,5 +1,5 @@
-import { createCanvas } from "@napi-rs/canvas";
-import type { LottiePlayer } from "lottie-web";
+import { createCanvas, type Canvas } from "@napi-rs/canvas";
+import type { LottiePlayer, AnimationItem } from "lottie-web";
 import { GIFEncoder, quantize, applyPalette } from "gifenc";
 
 // --- 1. Environment Mock ---
@@ -42,29 +42,31 @@ export const lottieToGif = async (
     const canvas = createCanvas(w, h);
     const ctx = canvas.getContext("2d");
 
-    const animation = lottie.loadAnimation({
-        //@ts-expect-error types
-        renderer: "canvas",
-        loop: false,
-        autoplay: false,
-        animationData: jsonData,
-        rendererSettings: {
-            //@ts-expect-error types
-            context: ctx as any,
-            clearCanvas: true,
-            preserveAspectRatio: "xMidYMid meet",
-        },
-    });
-
-    const encoder = new GIFEncoder();
-    const totalFrames = animation.totalFrames;
-    const delay = 1000 / frameRate;
-
-    // Pre-allocate reusable buffer for pixel data to avoid per-frame allocations
-    const pixelCount = w * h * 4;
-    const reusableData = new Uint8ClampedArray(pixelCount);
+    let animation: AnimationItem | null = null;
 
     try {
+        animation = lottie.loadAnimation({
+            //@ts-expect-error types
+            renderer: "canvas",
+            loop: false,
+            autoplay: false,
+            animationData: jsonData,
+            rendererSettings: {
+                //@ts-expect-error types
+                context: ctx as any,
+                clearCanvas: true,
+                preserveAspectRatio: "xMidYMid meet",
+            },
+        });
+
+        const encoder = new GIFEncoder();
+        const totalFrames = animation.totalFrames;
+        const delay = 1000 / frameRate;
+
+        // Pre-allocate reusable buffer for pixel data to avoid per-frame allocations
+        const pixelCount = w * h * 4;
+        const reusableData = new Uint8ClampedArray(pixelCount);
+
         for (let i = 0; i < totalFrames; i++) {
             animation.goToAndStop(i, true);
 
@@ -121,10 +123,43 @@ export const lottieToGif = async (
         encoder.finish();
         return encoder.bytes();
     } finally {
-        // CRITICAL: Destroy animation to free lottie-web resources
-        animation.destroy();
+        // CRITICAL: Aggressive cleanup of lottie-web resources
+        if (animation) {
+            // First destroy via lottie's standard method
+            animation.destroy();
+
+            // Nuclear cleanup: lottie-web's destroy() doesn't null all references
+            // Manually break circular references and clear large data structures
+            const anim = animation as any;
+            
+            // Clear animation data (the original JSON - can be huge)
+            anim.animationData = null;
+            
+            // Clear renderer internals if they still exist
+            if (anim.renderer) {
+                anim.renderer.layers = null;
+                anim.renderer.elements = null;
+                anim.renderer.globalData = null;
+                anim.renderer.animationItem = null;
+                anim.renderer = null;
+            }
+            
+            // Clear other large structures
+            anim.assets = null;
+            anim.layers = null;
+            anim.assetsData = null;
+            anim.audioController = null;
+        }
         
-        // Clear canvas context to release GPU/memory resources
+        // Clear canvas context
         ctx.clearRect(0, 0, w, h);
+
+        // Force clear lottie's internal animation registry
+        // lottie-web keeps animations in an internal array even after destroy()
+        try {
+            lottie.destroy();
+        } catch {
+            // Ignore errors - may throw if no animations registered
+        }
     }
 };
